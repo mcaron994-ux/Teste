@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>🔍 Info Site</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: system-ui, sans-serif;
+    background: #0f172a;
+    color: #e2e8f0;
+    min-height: 100vh;
+    padding: 16px;
+  }
+  header { text-align: center; margin-bottom: 20px; }
+  h1 { font-size: 1.5rem; color: #38bdf8; }
+  .card {
+    background: #1e293b;
+    border-radius: 14px;
+    padding: 16px;
+    margin-bottom: 14px;
+    box-shadow: 0 2px 8px rgba(0,0,0,.4);
+  }
+  .search {
+    display: flex; gap: 8px;
+  }
+  input {
+    flex: 1; padding: 12px; border-radius: 10px;
+    border: 1px solid #334155; background: #0f172a;
+    color: #e2e8f0; font-size: 1rem; min-width: 0;
+  }
+  button {
+    padding: 12px 18px; border: none; border-radius: 10px;
+    background: #38bdf8; color: #0f172a; font-weight: bold;
+    font-size: 1rem;
+  }
+  button:disabled { opacity: .5; }
+  .section-title { color: #38bdf8; font-weight: bold; margin-bottom: 8px; font-size: .95rem; }
+  .row {
+    display: flex; justify-content: space-between; gap: 10px;
+    padding: 7px 0; border-bottom: 1px solid #334155;
+    font-size: .9rem; word-break: break-all;
+  }
+  .row:last-child { border-bottom: none; }
+  .row span:first-child { color: #94a3b8; flex-shrink: 0; }
+  .row span:last-child { text-align: right; }
+  .ok { color: #4ade80; }
+  .bad { color: #f87171; }
+  .warn { color: #facc15; }
+  .loading { text-align: center; color: #38bdf8; padding: 20px; }
+  .spinner {
+    width: 32px; height: 32px; margin: 0 auto 10px;
+    border: 3px solid #334155; border-top-color: #38bdf8;
+    border-radius: 50%; animation: spin 1s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .error { text-align: center; color: #f87171; padding: 14px; }
+  .hidden { display: none; }
+  .tags { display: flex; flex-wrap: wrap; gap: 6px; }
+  .tag {
+    background: #0ea5e9; color: #0f172a; padding: 4px 10px;
+    border-radius: 20px; font-size: .8rem; font-weight: 600;
+  }
+  footer { text-align: center; color: #64748b; font-size: .75rem; margin-top: 20px; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>🔍 Info Site</h1>
+  <p style="color:#94a3b8; font-size:.85rem;">Récupère des infos sur n'importe quel site</p>
+</header>
+
+<div class="card">
+  <div class="search">
+    <input id="site" type="url" placeholder="ex: wikipedia.org" autocapitalize="off" autocomplete="off">
+    <button id="btn" onclick="analyze()">GO</button>
+  </div>
+</div>
+
+<div id="result" class="hidden"></div>
+
+<footer>Boîte à outils d'inspection — utilisé uniquement à des fins légitimes.</footer>
+
+<script>
+const CORS = u => "https://api.allorigins.win/raw?url=" + encodeURIComponent(u);
+
+async function fetchText(url) {
+  const r = await fetch(CORS(url));
+  if (!r.ok) throw new Error("HTTP " + r.status);
+  return await r.text();
+}
+
+function cardHTML(title, rows) {
+  return `<div class="card"><div class="section-title">${title}</div>${
+    rows.map(([k, v]) => `<div class="row"><span>${k}</span><span>${v ?? "n/a"}</span></div>`).join("")
+  }</div>`;
+}
+
+function detectTech(html, headers) {
+  const t = [], h = html.toLowerCase();
+  const map = {
+    WordPress: ["wp-content", "wp-includes"],
+    Shopify: ["cdn.shopify.com", "shopify"],
+    React: ["react-dom", "_reactroot"],
+    "Next.js": ["__next", "/_next/"],
+    Vue.js: ["data-v-", "vue.js"],
+    Angular: ["ng-app", "ng-version"],
+    jQuery: ["jquery"],
+    Bootstrap: ["bootstrap.min"],
+    Tailwind: ["tailwind"],
+    Webflow: ["webflow"],
+    Wix: ["wix.com", "static.wixstatic"],
+  };
+  for (const [name, keys] of Object.entries(map))
+    if (keys.some(k => h.includes(k))) t.push(name);
+  return t;
+}
+
+async function analyze() {
+  const btn = document.getElementById("btn");
+  const input = document.getElementById("site");
+  const out = document.getElementById("result");
+  let site = input.value.trim();
+  if (!site) return;
+  if (!/^https?:\/\//.test(site)) site = "https://" + site;
+
+  btn.disabled = true;
+  out.classList.remove("hidden");
+  out.innerHTML = `<div class="card loading"><div class="spinner"></div>⏳ Analyse de ${site}...</div>`;
+
+  const origin = new URL(site).origin;
+  const hostname = new URL(site).hostname;
+  const results = [];
+  const state = {};
+
+  try {
+    const resp = await fetch(CORS(site), { redirect: "follow" });
+    const html = await resp.text();
+
+    // Titre / meta
+    const title = (html.match(/<title[^>]*>([^<]*)<\/title>/i) || [])[1]?.trim() || "n/a";
+    const desc = (html.match(/<meta[^>]+name=["']description["'][^>]+content=["']([^"']*)/i) || [])[1] || "n/a";
+    const lang = (html.match(/<html[^>]+lang=["']([^"']*)/i) || [])[1] || "n/a";
+    const nbLinks = (html.match(/<a\s/gi) || []).length;
+    const nbImg = (html.match(/<img\s/gi) || []).length;
+    const emails = [...new Set(html.match(/[\w.+-]+@[\w-]+\.[\w.]{2,}/g) || [])].slice(0, 5).join(", ") || "n/a";
+
+    results.push(cardHTML("📄 Contenu", [
+      ["Titre", title],
+      ["Description", desc],
+      ["Langue", lang],
+      ["Liens", nbLinks],
+      ["Images", nbImg],
+      ["Emails", emails],
+    ]));
+
+    // Technos
+    const tech = detectTech(html);
+    const techHTML = `<div class="card"><div class="section-title">⚙️ Technologies</div>${
+      tech.length ? `<div class="tags">${tech.map(t => `<span class="tag">${t}</span>`).join("")}</div>`
+                  : `<div class="row"><span>Aucune techno connue détectée</span></div>`
+    }</div>`;
+    results.push(techHTML);
+
+    // Favicon
+    const fav = (html.match(/<link[^>]+rel=["'][^"']*icon[^"']*["'][^>]+href=["']([^"']*)/i) || [])[1];
+    if (fav) {
+      const favURL = new URL(fav, site).href;
+      results.unshift(`<div class="card" style="text-align:center;"><div class="section-title">🌐 ${hostname}</div><img src="${favURL}" onerror="this.remove()" style="width:56px;height:56px;border-radius:12px;"></div>`);
+    }
+  } catch (e) {
+    results.push(`<div class="card error">❌ Impossible de récupérer la page<br><small>${e.message}<br>(le site bloque peut-être les proxies)</small></div>`);
+  }
+
+  // Headers (via proxy dédié, CORS-friendly)
+  try {
+    const hr = await fetch("https://api.allorigins.win/get?url=" + encodeURIComponent(site));
+    const hData = await hr.json();
+    const hh = (hData && hData.headers) || {};
+    const secs = ["Server", "Content-Type", "X-Powered-By", "CF-Ray", "Via"].filter(k => hh[k]);
+    const secChecks = ["Strict-Transport-Security", "Content-Security-Policy", "X-Frame-Options", "X-Content-Type-Options"]
+      .map(h => `<div class="row"><span>${h}</span><span class="${hh[h] ? "ok" : "bad"}">${hh[h] ? "✅" : "❌"}</span></div>`)
+      .join("");
+    results.push(`<div class="card"><div class="section-title">🗂️ Headers</div>${
+      secs.map(h => `<div class="row"><span>${h}</span><span>${hh[h]}</span></div>`).join("")
+    }</div>`);
+    results.push(`<div class="card"><div class="section-title">🛡️ Sécurité</div>${secChecks}</div>`);
+  } catch (e) {
+    results.push(`<div class="card error">⚠️ Headers indisponibles (${e.message})</div>`);
+  }
+
+  // IP
+  try {
+    const ir = await fetch(`https://dns.google/resolve?name=${hostname}&type=A`);
+    const idata = await ir.json();
+    const ip = (idata.Answer || []).filter(a => a.type === 1).map(a => a.data)[0];
+    results.unshift(cardHTML("🌐 Réseau", [
+      ["Domaine", hostname],
+      ["IP", ip],
+    ]));
+  } catch (e) {}
+
+  // Horodatage
+  results.push(`<div class="card" style="text-align:center;color:#64748b;font-size:.8rem;">Analyse du ${new Date().toLocaleString("fr-FR")}</div>`);
+
+  out.innerHTML = results.join("");
+  btn.disabled = false;
+}
+
+document.getElementById("site").addEventListener("keydown", e => {
+  if (e.key === "Enter") analyze();
+});
+</script>
+
+</body>
+</html>
